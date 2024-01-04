@@ -117,9 +117,7 @@ int main()
 
 	//Calculated Host Variables
 	double dt = dl / (sqrt(2.) * c);	//Set the time step duration
-
-	//Value for Impedance
-	double Z = eta0 / sqrt(2.);
+	double Z = eta0 / sqrt(2.); //Value for Impedance
 
 	//boundary coefficients
 	double rXmin = -1;
