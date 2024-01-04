@@ -9,70 +9,114 @@
 #include "device_launch_parameters.h"
 
 
-//Additional Includes
+//C/C++ Includes
+//IO
 #include <stdio.h>
 #include <iostream>
-#include <fstream>
 #include <iomanip>  // for setprecision
-#include <ctime> //For Timing
+//File Handling
+#include <string>
+#include <fstream>
+//Timing 
+#include <ctime>
 
 //Program Defines 
 #define c 299792458			// speed of light in a vacuum
-#define PI 3.1415926589793  // mmmm PI
+#define PI 3.1415926589793  // PI
 #define mu0 PI*4e-7         // magnetic permeability in a vacuum H/m
 #define eta0 c*mu0          // wave impedance in free space 
 
-#define maxNT 4096			//Sets the maximum number of timesteps. Going to use a power of 2 as makes FFT easier
-
+#define defNX 100
+#define defNY 100
+#define defNT 512		//Sets the starting number of NT
 
 using namespace std;
 
 //*************	Utility Function Declarations *************
-double** declare_array2D(int, int);							//Generic function to create 2D arrays
-double** allocateAndCopyToDevice(double** V, int NX, int NY); //Function to create 2D arrays on Cuda Device
-void freeDeviceMemory(double** d_V, int NX);
+/**
+ * A kernel to apply a Source Voltage to a supplied input node (Ein)
+ * @param None
+ */
+void cudaCheckAndSync();	//Function to check for CUDA Errors and Synchronise Device
 
 //************* TLM Function Declarations *************
-void TLMsource(double& E0, int& n, double& dt, double& delay, double& width, ofstream& gaussian_time, double** V1, double** V2, double** V3, double** V4, int* Ein);				// excitation function
-__global__ void TLMscatter(double*, double*, int, double);	// TLM scatter process
-__global__ void TLMconnect(double*, double*, int);			// TLM connect process, inlcuding boundary conditions
-__global__ void TLMboundry(double&, double&, double&);
+/**
+ * Kernel that applies a Source Voltage to a specified input node (Ein)
+ * @param Pointer to the device memory representing voltage array 1.
+ * @param Pointer to the device memory representing voltage array 2.
+ * @param Pointer to the device memory representing voltage array 3.
+ * @param Pointer to the device memory representing voltage array 4.
+ * @param Value of NX (Size of grid in X direction)
+ * @param Value of NY (Size of grid in Y direction)
+ * @param Value representing the X coord of the input probe.
+ * @param Value representing the Y coord of the input probe.
+ * @param Value representing the source voltage.
+ */
+__global__ void TLMsource(double* dev_V1, double* dev_V2, double* dev_V3, double* dev_V4, const int NX, const int NY, const int EinX, const int EinY, const double E0);	// excitation function
 
+/**
+ * Kernel that 'scatters' an input impulse based on an applied source voltage
+ * @param Pointer to the device memory representing voltage array 1.
+ * @param Pointer to the device memory representing voltage array 2.
+ * @param Pointer to the device memory representing voltage array 3.
+ * @param Pointer to the device memory representing voltage array 4.
+ * @param Value of NX (Size of grid in X direction).
+ * @param Value of NY (Size of grid in Y direction).
+ * @param Pointer to the device memory representing the Transmission line impedance.
+ */
+__global__ void TLMscatter(double* dev_V1, double* dev_V2, double* dev_V3, double* dev_V4, const int NX, const int NY, const double _Z);	// TLM scatter process
+
+/**
+ * Kernel to connect the scattered impulses, Also applies boundary conditions
+ * @param Pointer to the device memory representing voltage array 1.
+ * @param Pointer to the device memory representing voltage array 2.
+ * @param Pointer to the device memory representing voltage array 3.
+ * @param Pointer to the device memory representing voltage array 4.
+ * @param Value of NX (Size of grid in X direction).
+ * @param Value of NY (Size of grid in Y direction).
+ * @param n The current time-step index
+ * @param Value representing the X coord of the output probe.
+ * @param Value representing the Y coord of the output probe.
+ * @param Pointer to the device memory representing minimum X boundary reflection.
+ * @param Pointer to the device memory representing maximum X boundary reflection.
+ * @param Pointer to the device memory representing minimum Y boundary reflection.
+ * @param Pointer to the device memory representing maximum Y boundary reflection.
+ */
+__global__ void TLMconnect(double* dev_V1, double* dev_V2, double* dev_V3, double* dev_V4, const int NX, const int NY, const int n, const int EoutX, const int EoutY, const double rXmin, const double rXmax, const double rYmin, const double rYmax);		// TLM connect process, including boundary conditions
+
+/**
+ *
+ * Kernel that determines the voltage at the output node (Eout)
+ * @param Pointer to the device memory representing voltage array 2.
+ * @param Pointer to the device memory representing voltage array 4.
+ * @param Pointer to the device memory representing the voltage output array.
+ * @param Value of NX (Size of grid in X direction).
+ * @param Value of NY (Size of grid in Y direction).
+ * @param n The current time-step index
+ * @param Value representing the X coord of the output probe.
+ * @param Value representing the Y coord of the output probe.
+ */
+__global__ void TLMoutput(double* dev_V2, double* dev_V4, double* dev_vout, const int NX, const int NY, const int n, const int EoutX, const int EoutY);
 
 
 int main()
 {
 	cudaError_t cudaStatus;
 
-	//Good practice to set device to use for kernal code
+	//Good practice to set device to use for kernel code
 	cudaStatus = cudaSetDevice(0);
 	if (cudaStatus != cudaSuccess) {
 		printf("Failed to set Device to Device 0");
 	}
 
-	//Setup Timing
-	clock_t start, end;
-	start = clock();
+	//Changeable Host Variables
+	int NX = defNX; //Number of Nodes in X Direction
+	int NY = defNY; //Number of Nodes in Y Direction
+	int NT = defNT; //Number of Time steps
+	double dl = 1;						//Set the node line segment length in meters
 
-	//Setup Host Variables
-	int NX = 100; //Number of Nodes in X Direction
-	int NY = 100; //Number of Nodes in Y Direction
-	int NT = 512; //Number of Time steps
-	double dl = 1; //Set the node line segment length in metres
-	double dt = dl / (sqrt(2.) * c); //Set the time step duration
-
-	//2D mesh variables
-	double I = 0, tempV = 0, E0 = 0, V = 0;
-	double** V1 = declare_array2D(NX, NY);
-	double** V2 = declare_array2D(NX, NY);
-	double** V3 = declare_array2D(NX, NY);
-	double** V4 = declare_array2D(NX, NY);
-
-	//2D Mesh variables - Device
-	double** d_V1 = allocateAndCopyToDevice(d_V1, NX, NY);
-	double** d_V2 = allocateAndCopyToDevice(d_V1, NX, NY);
-	double** d_V3 = allocateAndCopyToDevice(d_V1, NX, NY);
-	double** d_V4 = allocateAndCopyToDevice(d_V1, NX, NY);
+	//Calculated Host Variables
+	double dt = dl / (sqrt(2.) * c);	//Set the time step duration
 
 	//Value for Impedance
 	double Z = eta0 / sqrt(2.);
@@ -84,134 +128,100 @@ int main()
 	double rYmax = -1;
 
 	//input / output
-	double width = 20 * dt * sqrt(2.); //Gaussian Width
+	double width = 20 * dt * sqrt(2.);	//Gaussian Width
 	double delay = 100 * dt * sqrt(2.); // set time delay before starting excitation
-	int Ein[] = { 10,10 }; //Location of the input
+	int Ein[] = { 10,10 };	//Location of the input
 	int Eout[] = { 15,15 }; //Location of the Voltage Probe
 
-	//File streaming - Timing Data
-	ofstream computation_time("GPUTiming.out");  // log Timing Information to file - Comment out for timing
+	//CPU (Host) variables
+	double E0 = 0;
+	double* h_Vout = new double[NT](); //Array to Store data from GPU, Dynamic to make iterating easier
 
-	for (; NT <= maxNT; NT *= 2) //Looping for Multiple Values of NT (varying timestep)
-	{
-		//File straming - Output Data
-		ofstream output("2D_GPU_Voltage.out"); //Output of the voltage  - Comment out for timing 
-		ofstream gaussian_time("2D_GPU_gaussian_excitation.out");  // log excitation function to file - Comment out for timing
+	//2D mesh for GPU variables
+	double* dev_V1;
+	double* dev_V2;
+	double* dev_V3;
+	double* dev_V4;
+	double* dev_Vout;
 
-		// Start of TLM algorithm
-		// loop over total time NT in steps of dt
+	//Setup Blocks and Threads
+	int numThreads = 1024;
+	int numBlocks = std::min(((NX * NY) + numThreads - 1) / numThreads, 2147483647); // Guarantees at least 1 Block (Max Blocks on newer cards is (2^31)-1
 
-		for (int n = 0; n < NT; n++) {
+	//Allocating Device Memory
+	cudaCheckAndSync();
+	cudaStatus = cudaMalloc((void**)&dev_V1, (NX * NY * sizeof(double))); // Memory allocate for points array
+	cudaStatus = cudaMalloc((void**)&dev_V2, (NX * NY * sizeof(double))); // Memory allocate for points array
+	cudaStatus = cudaMalloc((void**)&dev_V3, (NX * NY * sizeof(double))); // Memory allocate for points array
+	cudaStatus = cudaMalloc((void**)&dev_V4, (NX * NY * sizeof(double))); // Memory allocate for points array
+	cudaStatus = cudaMalloc((void**)&dev_Vout, (NT * sizeof(double))); // Memory allocate for results array
+	cudaCheckAndSync();
 
-			//SOURCE
-			TLMsource(E0, n, dt, delay, width, gaussian_time, V1, V2, V3, V4, Ein);
+	//Setup Timing
+	clock_t start, end;
+	start = clock();
 
-			//SCATTER
+	//File streaming - Output Data
+	ofstream output("2D_GPU_Voltage.out"); //Output of the voltage  - Comment out for timing 
+	ofstream gaussian_time("2D_GPU_gaussian_excitation.out");  // log excitation function to file - Comment out for timing
 
-			// Launch the kernel
-			dim3 block(16, 16);
-			dim3 grid((NX + block.x - 1) / block.x, (NY + block.y - 1) / block.y);
-			//TLMscatter << <grid, block >> > (d_V, NX, NY);
+	// Start of TLM algorithm
+	// Loop over total time NT in steps of dt
+	for (int n = 0; n < NT; n++) {
+		//Source
+		E0 = (1 / sqrt(2.)) * exp(-(n * dt - delay) * (n * dt - delay) / (width * width));
+		gaussian_time << n * dt << "  " << E0 << endl; //Writing the Source Voltage to a file  - Comment out for timing
+		TLMsource << <1, 4 >> > (dev_V1, dev_V2, dev_V3, dev_V4, NX, NY, Ein[0], Ein[1], E0);
+		cudaCheckAndSync();
 
-			//Check for any errors launching the kernel
-			cudaStatus = cudaGetLastError();
-			if (cudaStatus != cudaSuccess) {
-				printf("cudaGetLastError() failed: %s\n", cudaGetErrorString(cudaStatus));
-			}
+		//Scatter
+		TLMscatter << <numBlocks, numThreads >> > (dev_V1, dev_V2, dev_V3, dev_V4, NX, NY, Z);
+		cudaCheckAndSync();
 
-			//Check for Errors when Synchornising CudaDevice
-			cudaStatus = cudaDeviceSynchronize();
-			if (cudaStatus != cudaSuccess) {
-				fprintf(stderr, "cudaDeviceSynchronize() failed: %s\n", cudaGetErrorString(cudaStatus));
-			}
+		//Connect
+		TLMconnect << <numBlocks, numThreads >> > (dev_V1, dev_V2, dev_V3, dev_V4, NX, NY, n, Eout[0], Eout[1], rXmin, rXmax, rYmin, rYmax);
+		cudaCheckAndSync();
 
-			//Scattering
-			for (int x = 0; x < NX; x++) {
-				for (int y = 0; y < NY; y++) {
-					I = (2 * V1[x][y] + 2 * V4[x][y] - 2 * V2[x][y] - 2 * V3[x][y]) / (4 * Z);
+		//Output
+		TLMoutput << <1, 1 >> > (dev_V2, dev_V4, dev_Vout, NX, NY, n, Eout[0], Eout[1]);
+		cudaCheckAndSync();
 
-					V = 2 * V1[x][y] - I * Z;         //port1
-					V1[x][y] = V - V1[x][y];
-					V = 2 * V2[x][y] + I * Z;         //port2
-					V2[x][y] = V - V2[x][y];
-					V = 2 * V3[x][y] + I * Z;         //port3
-					V3[x][y] = V - V3[x][y];
-					V = 2 * V4[x][y] - I * Z;         //port4
-					V4[x][y] = V - V4[x][y];
-				}
-			}
-
-
-
-
-
-
-
-			//connect
-			for (int x = 1; x < NX; x++) {
-				for (int y = 0; y < NY; y++) {
-					tempV = V2[x][y];
-					V2[x][y] = V4[x - 1][y];
-					V4[x - 1][y] = tempV;
-				}
-			}
-			for (int x = 0; x < NX; x++) {
-				for (int y = 1; y < NY; y++) {
-					tempV = V1[x][y];
-					V1[x][y] = V3[x][y - 1];
-					V3[x][y - 1] = tempV;
-				}
-			}
-
-			//boundary
-			for (int x = 0; x < NX; x++) {
-				V3[x][NY - 1] = rYmax * V3[x][NY - 1];
-				V1[x][0] = rYmin * V1[x][0];
-			}
-			for (int y = 0; y < NY; y++) {
-				V4[NX - 1][y] = rXmax * V4[NX - 1][y];
-				V2[0][y] = rXmin * V2[0][y];
-			}
-
-
-			output << n * dt << "  " << V2[Eout[0]][Eout[1]] + V4[Eout[0]][Eout[1]] << endl; // Writing the output voltage to file - Comment out for timing //Code provided by steve
-
-			//Output the progress to the terminal
-			if (n % 100 == 0)
-				cout << n << endl;
-
-		}
-		//Closing Data loggging Files
-		output.close();
-		gaussian_time.close();
-
-		//Calculate how long it took to complete a TLM simulation for a set number of NT
-		cout << "Done";
-		end = clock(); //End Timing
-		double TLM_Execution_Time = ((end - start) / (double)CLOCKS_PER_SEC);
-		std::cout << TLM_Execution_Time << '\n';
-
-		//Writing the computation time to file - Comment out for timing
-		computation_time << NX << "  " << NY << "  " << NT << "  " << TLM_Execution_Time << endl;
+		//Print progress to the terminal
+		if (n % 100 == 0)
+			cout << n << endl;
 	}
-	computation_time.close(); //Closing Timing File
+
+	cudaStatus = cudaMemcpy(h_Vout, dev_Vout, (NT * sizeof(double)), cudaMemcpyDeviceToHost); // Memory Copy back to CPU
+
+	// Output timing and voltage at Eout point
+	for (int i = 0; i < NT; ++i) {
+		output << i * dt << "  " << h_Vout[i] << std::endl; // Writes to file in comma delimited format
+	}
+
+	//Closing Data logging Files
+	output.close();
+	gaussian_time.close();
+
+	//Calculate how long it took to complete a TLM simulation for a set number of NT
+	cout << "Done";
+	end = clock(); //End Timing
+	double TLM_Execution_Time = ((end - start) / (double)CLOCKS_PER_SEC);
+	std::cout << TLM_Execution_Time << '\n';
+
 	cin.get(); //Keep Terminal Open until Enter is pressed
 
-	//Free Device Memory
-	freeDeviceMemory(d_V1, NX);
-	freeDeviceMemory(d_V2, NX);
-	freeDeviceMemory(d_V3, NX);
-	freeDeviceMemory(d_V4, NX);
+	// Free allocated memory from GPU
+	cudaFree(dev_V1);
+	cudaFree(dev_V2);
+	cudaFree(dev_V3);
+	cudaFree(dev_V4);
+	cudaFree(dev_Vout);
 
-	// Free host memory
-	for (int x = 0; x < NX; x++) {
-		delete[] V1[x];
-		delete[] V2[x];
-		delete[] V3[x];
-		delete[] V4[x];
-	}
+	//Free CPU memory
+	delete[]h_Vout;
 
-	//Resetting Cuda Device - Ensures Proper operation for Nsight and Visual Profiler
+
+	//Resetting CUDA Device - Ensures Proper operation for Nsight and Visual Profiler
 	cudaStatus = cudaDeviceReset();
 	if (cudaStatus != cudaSuccess) {
 		fprintf(stderr, "cudaDeviceReset failed!");
@@ -222,87 +232,128 @@ int main()
 }
 
 
+
 //************* TLM Function Definitions *************
 
-//TLM Source Definition
-void TLMsource(double& E0, int& n, double& dt, double& delay, double& width, ofstream& gaussian_time, double** V1, double** V2, double** V3, double** V4, int* Ein)
-{
-	E0 = (1 / sqrt(2.)) * exp(-(n * dt - delay) * (n * dt - delay) / (width * width));
-	// log value of gaussian voltage to file
-	gaussian_time << n * dt << "  " << E0 << endl; //Writing the Source Voltage to a file  - Comment out for timing
-	V1[Ein[0]][Ein[1]] = V1[Ein[0]][Ein[1]] + E0;
-	V2[Ein[0]][Ein[1]] = V2[Ein[0]][Ein[1]] - E0;
-	V3[Ein[0]][Ein[1]] = V3[Ein[0]][Ein[1]] - E0;
-	V4[Ein[0]][Ein[1]] = V4[Ein[0]][Ein[1]] + E0;
+__global__ void TLMsource(double* dev_V1, double* dev_V2, double* dev_V3, double* dev_V4, const int NX, const int NY, const int EinX, const int EinY, const double E0) {
+
+
+	// Thread identities
+	unsigned int tid = threadIdx.x + blockIdx.x * blockDim.x;
+
+	/* Source */
+	//Only 4 Operations so going to limit them to run on 4 threads
+	if (tid == 0) dev_V1[(EinX * NY) + EinY] = dev_V1[EinX * NY + EinY] + E0;
+	if (tid == 1) dev_V2[(EinX * NY) + EinY] = dev_V2[EinX * NY + EinY] - E0;
+	if (tid == 2) dev_V3[(EinX * NY) + EinY] = dev_V3[EinX * NY + EinY] - E0;
+	if (tid == 3) dev_V4[(EinX * NY) + EinY] = dev_V4[EinX * NY + EinY] + E0;
+	__syncthreads();
+}
+
+
+__global__ void TLMscatter(double* dev_V1, double* dev_V2, double* dev_V3, double* dev_V4, const int NX, const int NY, const double _Z) {
+
+	// Local Thread Variables
+	double V = 0;
+	// Thread identities
+	unsigned int tid = threadIdx.x + blockIdx.x * blockDim.x;
+	unsigned int stride = blockDim.x * gridDim.x;
+
+	/* Scatter */
+
+	//*/
+	for (size_t i = tid; i < NX * NY; i += stride) {
+		// Tidied up
+		double I = ((dev_V1[i] + dev_V4[i] - dev_V2[i] - dev_V3[i]) / 2); // Calculate coefficient
+		//I = (2 * V1[(x * NY) + y] + 2 * V4[(x * NY) + y] - 2 * V2[(x * NY) + y] - 2 * V3[(x * NY) + y]) / (4 * Z);
+
+		V = 2 * dev_V1[i] - I;         //port1
+		dev_V1[i] = V - dev_V1[i];
+
+		V = 2 * dev_V2[i] + I;         //port2
+		dev_V2[i] = V - dev_V2[i];
+
+		V = 2 * dev_V3[i] + I;         //port3
+		dev_V3[i] = V - dev_V3[i];
+
+		V = 2 * dev_V4[i] - I;         //port4
+		dev_V4[i] = V - dev_V4[i];
+
+		__syncthreads();
+	}
+}
+
+
+__global__ void TLMconnect(double* dev_V1, double* dev_V2, double* dev_V3, double* dev_V4, const int NX, const int NY, const int n, const int EoutX, const int EoutY, const double rXmin, const double rXmax, const double rYmin, const double rYmax) { // boundary variables
+
+	/* Stage 3: Connect */
+
+	// Variables
+	double tempV = 0; // temporary variable for swapping values
+
+	// Thread identities
+	unsigned int tid = threadIdx.x + blockIdx.x * blockDim.x;
+	unsigned int stride = blockDim.x * gridDim.x;
+
+	// Connect ports 2 and 4
+	for (size_t i = (tid + NY); i < (NX * NY); i += stride) { // Loop only through nodes where X > 0
+		tempV = dev_V2[i];
+		dev_V2[i] = dev_V4[i - NY];
+		dev_V4[i - NY] = tempV;
+	}
+	__syncthreads(); // Sync between loops
+
+	// Connect ports 1 and 3
+	for (size_t i = tid + 1; i < (NX * NY); i += stride) { // Loop only through nodes where Y > 0
+		// Skip when finding y = 0
+		if (i % NY != 0) {
+			tempV = dev_V1[i];
+			dev_V1[i] = dev_V3[i - 1];
+			dev_V3[i - 1] = tempV;
+		}
+	}
+	__syncthreads(); // Sync
+
+	// Connect boundaries
+	for (size_t x = tid; x < NX; x += stride) {
+		dev_V3[x * NY + NY - 1] = rYmax * dev_V3[x * NY + NY - 1];
+		dev_V1[x * NY] = rYmin * dev_V1[x * NY]; // V1[x * NY + 0] = rYmin * V1[x * NY + 0];
+	}
+	__syncthreads(); // Sync between loops
+
+	for (size_t y = tid; y < NY; y += stride) {
+		dev_V4[(NX - 1) * NY + y] = rXmax * dev_V4[(NX - 1) * NY + y];
+		dev_V2[y] = rXmin * dev_V2[y]; // V2[0 * NY + y] = rXmin * V2[0 * NY + y];
+	}
+	__syncthreads(); // Sync between loops
+}
+
+
+__global__ void TLMoutput(double* dev_V2, double* dev_V4, double* dev_vout, const int NX, const int NY, const int n, const int EoutX, const int EoutY) {
+
+	unsigned int tid = threadIdx.x + blockIdx.x * blockDim.x;
+
+	/* Stage 4: Output */
+	if (tid == 0) {
+		dev_vout[n] = dev_V2[EoutX * NY + EoutY] + dev_V4[EoutX * NY + EoutY];
+	}
 
 }
 
-//TLM Scatter Definition
-__global__ void TLMscatter(double*, double*, int, double)
-{
-	int x = blockIdx.x * blockDim.x + threadIdx.x;
-	int y = blockIdx.y * blockDim.y + threadIdx.y;
-
-
-}
-
-//TLM Connect Definition
-__global__ void TLMconnect(double*, double*, int)
-{
-	int x = blockIdx.x * blockDim.x + threadIdx.x;
-	int y = blockIdx.y * blockDim.y + threadIdx.y;
-
-}
-
-//TLM Boundry Definition
-__global__ void TLMboundry(double& a, double& b, double& cc)
-{
-	int x = blockIdx.x * blockDim.x + threadIdx.x;
-	int y = blockIdx.y * blockDim.y + threadIdx.y;
-
-}
 
 //************* Utility Function Definitions *************
 
-//Declare 2D Array on Host
-double** declare_array2D(int NX, int NY) {
-	double** V = new double* [NX];
-	for (int x = 0; x < NX; x++) {
-		V[x] = new double[NY];
+void cudaCheckAndSync()	//Function to check for CUDA Errors and Synchronise Device
+{
+	//Check for any errors launching the kernel
+	cudaError_t cudaStatus = cudaGetLastError();
+	if (cudaStatus != cudaSuccess) {
+		printf("cudaGetLastError() failed: %s\n", cudaGetErrorString(cudaStatus));
 	}
 
-	//Setting to Zero
-	for (int x = 0; x < NX; x++) {
-		for (int y = 0; y < NY; y++) {
-			V[x][y] = 0;
-		}
+	//Check for Errors when Synchronising CudaDevice
+	cudaStatus = cudaDeviceSynchronize();
+	if (cudaStatus != cudaSuccess) {
+		printf("cudaDeviceSynchronize() failed: %s\n", cudaGetErrorString(cudaStatus));
 	}
-	return V;
-}
-
-// Function to allocate and copy 2D array to the device
-double** allocateAndCopyToDevice(double** V, int NX, int NY) {
-	double** d_V;
-
-	// Allocate device memory
-	cudaMalloc((void**)&d_V, NX * sizeof(double*));
-	for (int i = 0; i < NX; i++) {
-		cudaMalloc((void**)&(d_V[i]), NY * sizeof(double));
-	}
-
-	// Copy data from host to device
-	cudaMemcpy(d_V, V, NX * sizeof(double*), cudaMemcpyHostToDevice);
-	for (int i = 0; i < NX; i++) {
-		cudaMemcpy(d_V[i], V[i], NY * sizeof(double), cudaMemcpyHostToDevice);
-	}
-
-	return d_V;
-}
-
-// Function to free device memory
-void freeDeviceMemory(double** d_V, int NX) {
-	for (int i = 0; i < NX; i++) {
-		cudaFree(d_V[i]);
-	}
-	cudaFree(d_V);
 }
