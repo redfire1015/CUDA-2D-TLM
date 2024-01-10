@@ -319,14 +319,14 @@ __global__ void TLMconnect(double* dev_V1, double* dev_V2, double* dev_V3, doubl
 	// Calculate Boundary Conditions For V1 and V3
 	for (size_t x = tid; x < NX; x += stride) {
 		dev_V3[x * NY + NY - 1] = rYmax * dev_V3[x * NY + NY - 1];
-		dev_V1[x * NY] = rYmin * dev_V1[x * NY]; // V1[x * NY + 0] = rYmin * V1[x * NY + 0];
+		dev_V1[x * NY] = rYmin * dev_V1[x * NY];
 	}
 	__syncthreads(); // Sync between loops
 
 	// Calculate Boundary Conditions For V2 and V4
 	for (size_t y = tid; y < NY; y += stride) {
 		dev_V4[(NX - 1) * NY + y] = rXmax * dev_V4[(NX - 1) * NY + y];
-		dev_V2[y] = rXmin * dev_V2[y]; // V2[0 * NY + y] = rXmin * V2[0 * NY + y];
+		dev_V2[y] = rXmin * dev_V2[y];
 	}
 	__syncthreads(); // Sync between loops
 }
