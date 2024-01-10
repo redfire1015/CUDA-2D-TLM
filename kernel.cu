@@ -28,7 +28,11 @@
 
 #define defNX 100
 #define defNY 100
-#define defNT 512		//Sets the starting number of NT
+#define defNT 1024		//Sets the starting number of NT
+
+//Essentially 2D -> 1D array means:
+// X = x*NY 
+// Y = y 
 
 using namespace std;
 
@@ -148,10 +152,10 @@ int main()
 
 	//Allocating Device Memory
 	cudaCheckAndSync();
-	cudaStatus = cudaMalloc((void**)&dev_V1, (NX * NY * sizeof(double))); // Memory allocate for points array
-	cudaStatus = cudaMalloc((void**)&dev_V2, (NX * NY * sizeof(double))); // Memory allocate for points array
-	cudaStatus = cudaMalloc((void**)&dev_V3, (NX * NY * sizeof(double))); // Memory allocate for points array
-	cudaStatus = cudaMalloc((void**)&dev_V4, (NX * NY * sizeof(double))); // Memory allocate for points array
+	cudaStatus = cudaMalloc((void**)&dev_V1, (NX * NY * sizeof(double))); // Memory allocate for V1 array on device
+	cudaStatus = cudaMalloc((void**)&dev_V2, (NX * NY * sizeof(double))); // Memory allocate for V2 array on device
+	cudaStatus = cudaMalloc((void**)&dev_V3, (NX * NY * sizeof(double))); // Memory allocate for V3 array on device
+	cudaStatus = cudaMalloc((void**)&dev_V4, (NX * NY * sizeof(double))); // Memory allocate for V4 array on device
 	cudaStatus = cudaMalloc((void**)&dev_Vout, (NT * sizeof(double))); // Memory allocate for results array
 	cudaCheckAndSync();
 
@@ -185,26 +189,28 @@ int main()
 		cudaCheckAndSync();
 
 		//Print progress to the terminal
+		//Will Slow down processing as time taken to print to screen (only relevant for shorter runtimes however)
 		if (n % 100 == 0)
 			cout << n << endl;
 	}
 
+	//Once completed the calculations, copy the voltage output array back to the CPU to be written to file
 	cudaStatus = cudaMemcpy(h_Vout, dev_Vout, (NT * sizeof(double)), cudaMemcpyDeviceToHost); // Memory Copy back to CPU
 
 	// Output timing and voltage at Eout point
 	for (int i = 0; i < NT; ++i) {
-		output << i * dt << "  " << h_Vout[i] << std::endl; // Writes to file in comma delimited format
+		output << i * dt << "  " << h_Vout[i] << std::endl; // Writes output to file 
 	}
 
 	//Closing Data logging Files
 	output.close();
 	gaussian_time.close();
 
-	//Calculate how long it took to complete a TLM simulation for a set number of NT
+
 	cout << "Done";
 	end = clock(); //End Timing
-	double TLM_Execution_Time = ((end - start) / (double)CLOCKS_PER_SEC);
-	std::cout << TLM_Execution_Time << '\n';
+	double TLM_Execution_Time = ((end - start) / (double)CLOCKS_PER_SEC); //Calculate Execution time
+	std::cout << TLM_Execution_Time << '\n'; //Print time
 
 	cin.get(); //Keep Terminal Open until Enter is pressed
 
@@ -229,37 +235,35 @@ int main()
 	return 0;
 }
 
-
-
 //************* TLM Function Definitions *************
 
+//TLM Source Definition
+//Places a source stimulation at a given point wrt time.
 __global__ void TLMsource(double* dev_V1, double* dev_V2, double* dev_V3, double* dev_V4, const int NX, const int NY, const int EinX, const int EinY, const double E0) {
 
-
-	// Thread identities
+	// Unique Thread ID
 	unsigned int tid = threadIdx.x + blockIdx.x * blockDim.x;
 
-	/* Source */
 	//Only 4 Operations so going to limit them to run on 4 threads
 	if (tid == 0) dev_V1[(EinX * NY) + EinY] = dev_V1[EinX * NY + EinY] + E0;
 	if (tid == 1) dev_V2[(EinX * NY) + EinY] = dev_V2[EinX * NY + EinY] - E0;
 	if (tid == 2) dev_V3[(EinX * NY) + EinY] = dev_V3[EinX * NY + EinY] - E0;
 	if (tid == 3) dev_V4[(EinX * NY) + EinY] = dev_V4[EinX * NY + EinY] + E0;
-	__syncthreads();
+	__syncthreads(); //Synchronise Threads. Not necessarily required as we synchronise after this kernel call but good practise.
 }
 
-
+//TLM Scatter Definition
+//Calculates how the input wave interacts with nodes
 __global__ void TLMscatter(double* dev_V1, double* dev_V2, double* dev_V3, double* dev_V4, const int NX, const int NY, const double _Z) {
 
-	// Local Thread Variables
-	double V = 0;
+	// Local Thread Variable
+	double V = 0; //Voltage Value
+
+
 	// Thread identities
-	unsigned int tid = threadIdx.x + blockIdx.x * blockDim.x;
-	unsigned int stride = blockDim.x * gridDim.x;
+	unsigned int tid = threadIdx.x + blockIdx.x * blockDim.x; //Unique Thread ID
+	unsigned int stride = blockDim.x * gridDim.x;	//Strides to take inside the for loop based upon total available threads and blocks
 
-	/* Scatter */
-
-	//*/
 	for (size_t i = tid; i < NX * NY; i += stride) {
 		// Tidied up
 		double I = ((dev_V1[i] + dev_V4[i] - dev_V2[i] - dev_V3[i]) / 2); // Calculate coefficient
@@ -276,33 +280,33 @@ __global__ void TLMscatter(double* dev_V1, double* dev_V2, double* dev_V3, doubl
 
 		V = 2 * dev_V4[i] - I;         //port4
 		dev_V4[i] = V - dev_V4[i];
-
-		__syncthreads();
+		//Don't need to synchronise here as threads only rely on current values!
+		//Reduces overhead
 	}
+	__syncthreads(); //Synchronise Threads. Not necessarily required as we synchronise after this kernel call but good practise.
 }
 
-
+//TLM Connect Definition
+//Connect TLM nodes and update Voltages based on interactions between nodes 
 __global__ void TLMconnect(double* dev_V1, double* dev_V2, double* dev_V3, double* dev_V4, const int NX, const int NY, const int n, const int EoutX, const int EoutY, const double rXmin, const double rXmax, const double rYmin, const double rYmax) { // boundary variables
 
-	/* Stage 3: Connect */
-
-	// Variables
-	double tempV = 0; // temporary variable for swapping values
+	// Local Thread Variable
+	double tempV = 0; // Temp voltage variable used to swap values
 
 	// Thread identities
-	unsigned int tid = threadIdx.x + blockIdx.x * blockDim.x;
-	unsigned int stride = blockDim.x * gridDim.x;
+	unsigned int tid = threadIdx.x + blockIdx.x * blockDim.x; //Unique Thread ID
+	unsigned int stride = blockDim.x * gridDim.x; //Strides to take inside the for loop based upon total available threads and blocks
 
-	// Connect ports 2 and 4
-	for (size_t i = (tid + NY); i < (NX * NY); i += stride) { // Loop only through nodes where X > 0
+	// Connect: Loop for ports 2 and 4
+	for (size_t i = (tid + NY); i < (NX * NY); i += stride) { // Skip any x=0 values
 		tempV = dev_V2[i];
 		dev_V2[i] = dev_V4[i - NY];
 		dev_V4[i - NY] = tempV;
 	}
 	__syncthreads(); // Sync between loops
 
-	// Connect ports 1 and 3
-	for (size_t i = tid + 1; i < (NX * NY); i += stride) { // Loop only through nodes where Y > 0
+	// Connect: Loop for ports 1 and 3
+	for (size_t i = tid + 1; i < (NX * NY); i += stride) { // Skip any Y=0 values
 		// Skip when finding y = 0
 		if (i % NY != 0) {
 			tempV = dev_V1[i];
@@ -310,15 +314,16 @@ __global__ void TLMconnect(double* dev_V1, double* dev_V2, double* dev_V3, doubl
 			dev_V3[i - 1] = tempV;
 		}
 	}
-	__syncthreads(); // Sync
+	__syncthreads(); // Sync between loops
 
-	// Connect boundaries
+	// Calculate Boundary Conditions For V1 and V3
 	for (size_t x = tid; x < NX; x += stride) {
 		dev_V3[x * NY + NY - 1] = rYmax * dev_V3[x * NY + NY - 1];
 		dev_V1[x * NY] = rYmin * dev_V1[x * NY]; // V1[x * NY + 0] = rYmin * V1[x * NY + 0];
 	}
 	__syncthreads(); // Sync between loops
 
+	// Calculate Boundary Conditions For V2 and V4
 	for (size_t y = tid; y < NY; y += stride) {
 		dev_V4[(NX - 1) * NY + y] = rXmax * dev_V4[(NX - 1) * NY + y];
 		dev_V2[y] = rXmin * dev_V2[y]; // V2[0 * NY + y] = rXmin * V2[0 * NY + y];
@@ -326,18 +331,18 @@ __global__ void TLMconnect(double* dev_V1, double* dev_V2, double* dev_V3, doubl
 	__syncthreads(); // Sync between loops
 }
 
-
+// TLM output function
+// Kernel call that only performs a singular addition
+// Could be done in CPU code!
 __global__ void TLMoutput(double* dev_V2, double* dev_V4, double* dev_vout, const int NX, const int NY, const int n, const int EoutX, const int EoutY) {
 
-	unsigned int tid = threadIdx.x + blockIdx.x * blockDim.x;
+	unsigned int tid = threadIdx.x + blockIdx.x * blockDim.x; //Gets thread ID - Only called on a single thread on a single block but good practise in case kernel called with more than 1 thread
 
-	/* Stage 4: Output */
-	if (tid == 0) {
-		dev_vout[n] = dev_V2[EoutX * NY + EoutY] + dev_V4[EoutX * NY + EoutY];
+	if (tid == 0) { //Only run on first thread
+		dev_vout[n] = dev_V2[EoutX * NY + EoutY] + dev_V4[EoutX * NY + EoutY]; //Calculate output voltage and store on device array
 	}
 
 }
-
 
 //************* Utility Function Definitions *************
 
