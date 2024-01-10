@@ -249,7 +249,7 @@ __global__ void TLMsource(double* dev_V1, double* dev_V2, double* dev_V3, double
 	if (tid == 1) dev_V2[(EinX * NY) + EinY] = dev_V2[EinX * NY + EinY] - E0;
 	if (tid == 2) dev_V3[(EinX * NY) + EinY] = dev_V3[EinX * NY + EinY] - E0;
 	if (tid == 3) dev_V4[(EinX * NY) + EinY] = dev_V4[EinX * NY + EinY] + E0;
-	__syncthreads(); //Synchronise Threads. Not necessarily required as we synchronise after this kernel call but good practise.
+	//Synchronisation takes place in main
 }
 
 //TLM Scatter Definition
@@ -283,7 +283,7 @@ __global__ void TLMscatter(double* dev_V1, double* dev_V2, double* dev_V3, doubl
 		//Don't need to synchronise here as threads only rely on current values!
 		//Reduces overhead
 	}
-	__syncthreads(); //Synchronise Threads. Not necessarily required as we synchronise after this kernel call but good practise.
+	//Synchronisation takes place in main
 }
 
 //TLM Connect Definition
@@ -303,7 +303,7 @@ __global__ void TLMconnect(double* dev_V1, double* dev_V2, double* dev_V3, doubl
 		dev_V2[i] = dev_V4[i - NY];
 		dev_V4[i - NY] = tempV;
 	}
-	__syncthreads(); // Sync between loops
+
 
 	// Connect: Loop for ports 1 and 3
 	for (size_t i = tid + 1; i < (NX * NY); i += stride) { // Skip any Y=0 values
@@ -321,14 +321,14 @@ __global__ void TLMconnect(double* dev_V1, double* dev_V2, double* dev_V3, doubl
 		dev_V3[x * NY + NY - 1] = rYmax * dev_V3[x * NY + NY - 1];
 		dev_V1[x * NY] = rYmin * dev_V1[x * NY];
 	}
-	__syncthreads(); // Sync between loops
+
 
 	// Calculate Boundary Conditions For V2 and V4
 	for (size_t y = tid; y < NY; y += stride) {
 		dev_V4[(NX - 1) * NY + y] = rXmax * dev_V4[(NX - 1) * NY + y];
 		dev_V2[y] = rXmin * dev_V2[y];
 	}
-	__syncthreads(); // Sync between loops
+	//Synchronisation takes place in main
 }
 
 // TLM output function
@@ -341,7 +341,7 @@ __global__ void TLMoutput(double* dev_V2, double* dev_V4, double* dev_vout, cons
 	if (tid == 0) { //Only run on first thread
 		dev_vout[n] = dev_V2[EoutX * NY + EoutY] + dev_V4[EoutX * NY + EoutY]; //Calculate output voltage and store on device array
 	}
-
+	//Synchronisation takes place in main
 }
 
 //************* Utility Function Definitions *************
