@@ -26,8 +26,8 @@
 #define mu0 PI*4e-7         // magnetic permeability in a vacuum H/m
 #define eta0 c*mu0          // wave impedance in free space 
 
-#define defNX 50
-#define defNY 50
+#define defNX 150
+#define defNY 150
 #define defNT 4096		//Sets the starting number of NT
 
 //Essentially 2D -> 1D array means:
@@ -37,14 +37,14 @@
 using namespace std;
 
 //*************	Utility Function Declarations *************
-/**
- * A kernel to apply a Source Voltage to a supplied input node (Ein)
+/*
+ * Function to Check for Cuda Errors and synchronise Cuda (Ein)
  * @param None
  */
 void cudaCheckAndSync();	//Function to check for CUDA Errors and Synchronise Device
 
 //************* TLM Function Declarations *************
-/**
+/*
  * Kernel that applies a Source Voltage to a specified input node (Ein)
  * @param Pointer to the device memory representing voltage array 1.
  * @param Pointer to the device memory representing voltage array 2.
@@ -58,7 +58,7 @@ void cudaCheckAndSync();	//Function to check for CUDA Errors and Synchronise Dev
  */
 __global__ void TLMsource(double* dev_V1, double* dev_V2, double* dev_V3, double* dev_V4, const int NX, const int NY, const int EinX, const int EinY, const double E0);	// excitation function
 
-/**
+/*
  * Kernel that 'scatters' an input impulse based on an applied source voltage
  * @param Pointer to the device memory representing voltage array 1.
  * @param Pointer to the device memory representing voltage array 2.
@@ -69,7 +69,7 @@ __global__ void TLMsource(double* dev_V1, double* dev_V2, double* dev_V3, double
  */
 __global__ void TLMscatter(double* dev_V1, double* dev_V2, double* dev_V3, double* dev_V4, const int NX, const int NY);	// TLM scatter process
 
-/**
+/*
  * Kernel to connect the scattered impulses, Also applies boundary conditions
  * @param Pointer to the device memory representing voltage array 1.
  * @param Pointer to the device memory representing voltage array 2.
@@ -80,8 +80,7 @@ __global__ void TLMscatter(double* dev_V1, double* dev_V2, double* dev_V3, doubl
  */
 __global__ void TLMconnect(double* dev_V1, double* dev_V2, double* dev_V3, double* dev_V4, const int NX, const int NY);		// TLM connect process, including boundary conditions
 
-/**
- *
+/*
  * Kernel that applied boundary conditions and determines the voltage at the output node (Eout)
  * @param Pointer to the device memory representing voltage array 1.
  * @param Pointer to the device memory representing voltage array 2.
@@ -137,11 +136,11 @@ int main()
 	double* h_Vout = new double[NT](); //Array to Store data from GPU, Dynamic to make outputting data easier
 
 	//2D mesh for GPU variables
-	double* dev_V1;
-	double* dev_V2;
-	double* dev_V3;
-	double* dev_V4;
-	double* dev_Vout;
+	double* dev_V1 = nullptr;
+	double* dev_V2 = nullptr;
+	double* dev_V3 = nullptr;
+	double* dev_V4 = nullptr;
+	double* dev_Vout = nullptr;
 
 	//Setup Blocks and Threads
 	int numThreads = 1024;
