@@ -26,9 +26,9 @@
 #define mu0 PI*4e-7         // magnetic permeability in a vacuum H/m
 #define eta0 c*mu0          // wave impedance in free space 
 
-#define defNX 100
-#define defNY 100
-#define defNT 8192		//Sets the starting number of NT
+#define defNX 50
+#define defNY 50
+#define defNT 4096		//Sets the starting number of NT
 
 //Essentially 2D -> 1D array means:
 // X = x*NY 
@@ -66,12 +66,23 @@ __global__ void TLMsource(double* dev_V1, double* dev_V2, double* dev_V3, double
  * @param Pointer to the device memory representing voltage array 4.
  * @param Value of NX (Size of grid in X direction).
  * @param Value of NY (Size of grid in Y direction).
- * @param Pointer to the device memory representing the Transmission line impedance.
  */
-__global__ void TLMscatter(double* dev_V1, double* dev_V2, double* dev_V3, double* dev_V4, const int NX, const int NY, const double _Z);	// TLM scatter process
+__global__ void TLMscatter(double* dev_V1, double* dev_V2, double* dev_V3, double* dev_V4, const int NX, const int NY);	// TLM scatter process
 
 /**
  * Kernel to connect the scattered impulses, Also applies boundary conditions
+ * @param Pointer to the device memory representing voltage array 1.
+ * @param Pointer to the device memory representing voltage array 2.
+ * @param Pointer to the device memory representing voltage array 3.
+ * @param Pointer to the device memory representing voltage array 4.
+ * @param Value of NX (Size of grid in X direction).
+ * @param Value of NY (Size of grid in Y direction).
+ */
+__global__ void TLMconnect(double* dev_V1, double* dev_V2, double* dev_V3, double* dev_V4, const int NX, const int NY);		// TLM connect process, including boundary conditions
+
+/**
+ *
+ * Kernel that applied boundary conditions and determines the voltage at the output node (Eout)
  * @param Pointer to the device memory representing voltage array 1.
  * @param Pointer to the device memory representing voltage array 2.
  * @param Pointer to the device memory representing voltage array 3.
@@ -86,21 +97,7 @@ __global__ void TLMscatter(double* dev_V1, double* dev_V2, double* dev_V3, doubl
  * @param Pointer to the device memory representing minimum Y boundary reflection.
  * @param Pointer to the device memory representing maximum Y boundary reflection.
  */
-__global__ void TLMconnect(double* dev_V1, double* dev_V2, double* dev_V3, double* dev_V4, const int NX, const int NY, const int n, const int EoutX, const int EoutY, const double rXmin, const double rXmax, const double rYmin, const double rYmax);		// TLM connect process, including boundary conditions
-
-/**
- *
- * Kernel that determines the voltage at the output node (Eout)
- * @param Pointer to the device memory representing voltage array 2.
- * @param Pointer to the device memory representing voltage array 4.
- * @param Pointer to the device memory representing the voltage output array.
- * @param Value of NX (Size of grid in X direction).
- * @param Value of NY (Size of grid in Y direction).
- * @param n The current time-step index
- * @param Value representing the X coord of the output probe.
- * @param Value representing the Y coord of the output probe.
- */
-__global__ void TLMoutput(double* dev_V2, double* dev_V4, double* dev_vout, const int NX, const int NY, const int n, const int EoutX, const int EoutY);
+__global__ void TLMBoundryOutput(double* dev_V1, double* dev_V2, double* dev_V3, double* dev_V4, double* dev_vout, const int NX, const int NY, const int n, const int EoutX, const int EoutY, const double rXmin, const double rXmax, const double rYmin, const double rYmax);
 
 
 int main()
@@ -121,7 +118,7 @@ int main()
 
 	//Calculated Host Variables
 	double dt = dl / (sqrt(2.) * c);	//Set the time step duration
-	double Z = eta0 / sqrt(2.); //Value for Impedance
+	//double Z = eta0 / sqrt(2.); //Value for Impedance //Not needed 
 
 	//boundary coefficients
 	double rXmin = -1;
@@ -137,7 +134,7 @@ int main()
 
 	//CPU (Host) variables
 	double E0 = 0;
-	double* h_Vout = new double[NT](); //Array to Store data from GPU, Dynamic to make iterating easier
+	double* h_Vout = new double[NT](); //Array to Store data from GPU, Dynamic to make outputting data easier
 
 	//2D mesh for GPU variables
 	double* dev_V1;
@@ -148,7 +145,7 @@ int main()
 
 	//Setup Blocks and Threads
 	int numThreads = 1024;
-	int numBlocks = std::min(((NX * NY) + numThreads - 1) / numThreads, 2147483647); // Guarantees at least 1 Block (Max Blocks on newer cards is (2^31)-1
+	int numBlocks = std::min(((NX * NY) + numThreads - 1) / numThreads, 2147483647); // Guarantees at least 1 Block (Max Blocks on newer cards is (2^31)-1) (Old Cards it is 65535 or 2^16-1)
 
 	//Allocating Device Memory
 	cudaCheckAndSync();
@@ -177,15 +174,15 @@ int main()
 		cudaCheckAndSync();
 
 		//Scatter
-		TLMscatter << <numBlocks, numThreads >> > (dev_V1, dev_V2, dev_V3, dev_V4, NX, NY, Z); //Many operations so varying blocks and threads
+		TLMscatter << <numBlocks, numThreads >> > (dev_V1, dev_V2, dev_V3, dev_V4, NX, NY); //Many operations so varying blocks and threads
 		cudaCheckAndSync();
 
 		//Connect
-		TLMconnect << <numBlocks, numThreads >> > (dev_V1, dev_V2, dev_V3, dev_V4, NX, NY, n, Eout[0], Eout[1], rXmin, rXmax, rYmin, rYmax); //Many operations so varying blocks and threads
+		TLMconnect << <numBlocks, numThreads >> > (dev_V1, dev_V2, dev_V3, dev_V4, NX, NY); //Many operations so varying blocks and threads
 		cudaCheckAndSync();
 
 		//Output
-		TLMoutput << <1, 1 >> > (dev_V2, dev_V4, dev_Vout, NX, NY, n, Eout[0], Eout[1]); //Only 1 Operation so 1 Block with 1 Thread
+		TLMBoundryOutput << <numBlocks, numThreads >> > (dev_V1, dev_V2, dev_V3, dev_V4, dev_Vout, NX, NY, n, Eout[0], Eout[1], rXmin, rXmax, rYmin, rYmax); //Only 1 Operation so 1 Block with 1 Thread
 		cudaCheckAndSync();
 
 		//Print progress to the terminal
@@ -245,16 +242,16 @@ __global__ void TLMsource(double* dev_V1, double* dev_V2, double* dev_V3, double
 	unsigned int tid = threadIdx.x + blockIdx.x * blockDim.x;
 
 	//Only 4 Operations so going to limit them to run on 4 threads
-	if (tid == 0) dev_V1[(EinX * NY) + EinY] = dev_V1[EinX * NY + EinY] + E0;
-	if (tid == 1) dev_V2[(EinX * NY) + EinY] = dev_V2[EinX * NY + EinY] - E0;
-	if (tid == 2) dev_V3[(EinX * NY) + EinY] = dev_V3[EinX * NY + EinY] - E0;
-	if (tid == 3) dev_V4[(EinX * NY) + EinY] = dev_V4[EinX * NY + EinY] + E0;
+	if (tid == 0) dev_V1[(EinX * NY) + EinY] = dev_V1[(EinX * NY) + EinY] + E0;
+	if (tid == 1) dev_V2[(EinX * NY) + EinY] = dev_V2[(EinX * NY) + EinY] - E0;
+	if (tid == 2) dev_V3[(EinX * NY) + EinY] = dev_V3[(EinX * NY) + EinY] - E0;
+	if (tid == 3) dev_V4[(EinX * NY) + EinY] = dev_V4[(EinX * NY) + EinY] + E0;
 	//Synchronisation takes place in main
 }
 
 //TLM Scatter Definition
 //Calculates how the input wave interacts with nodes
-__global__ void TLMscatter(double* dev_V1, double* dev_V2, double* dev_V3, double* dev_V4, const int NX, const int NY, const double _Z) {
+__global__ void TLMscatter(double* dev_V1, double* dev_V2, double* dev_V3, double* dev_V4, const int NX, const int NY) {
 
 	// Local Thread Variable
 	double V = 0; //Voltage Value
@@ -267,7 +264,7 @@ __global__ void TLMscatter(double* dev_V1, double* dev_V2, double* dev_V3, doubl
 	for (size_t i = tid; i < NX * NY; i += stride) {
 		// Tidied up
 		double I = ((dev_V1[i] + dev_V4[i] - dev_V2[i] - dev_V3[i]) / 2); // Calculate coefficient
-		//I = (2 * V1[(x * NY) + y] + 2 * V4[(x * NY) + y] - 2 * V2[(x * NY) + y] - 2 * V3[(x * NY) + y]) / (4 * Z);
+		//I = (2 * V1[(x * NY) + y] + 2 * V4[(x * NY) + y] - 2 * V2[(x * NY) + y] - 2 * V3[(x * NY) + y]) / (4 * Z); //Old Calculation
 
 		V = 2 * dev_V1[i] - I;         //port1
 		dev_V1[i] = V - dev_V1[i];
@@ -280,7 +277,7 @@ __global__ void TLMscatter(double* dev_V1, double* dev_V2, double* dev_V3, doubl
 
 		V = 2 * dev_V4[i] - I;         //port4
 		dev_V4[i] = V - dev_V4[i];
-		//Don't need to synchronise here as threads only rely on current values!
+		//Don't need to synchronise here as threads only rely on independent values!
 		//Reduces overhead
 	}
 	//Synchronisation takes place in main
@@ -288,7 +285,7 @@ __global__ void TLMscatter(double* dev_V1, double* dev_V2, double* dev_V3, doubl
 
 //TLM Connect Definition
 //Connect TLM nodes and update Voltages based on interactions between nodes 
-__global__ void TLMconnect(double* dev_V1, double* dev_V2, double* dev_V3, double* dev_V4, const int NX, const int NY, const int n, const int EoutX, const int EoutY, const double rXmin, const double rXmax, const double rYmin, const double rYmax) { // boundary variables
+__global__ void TLMconnect(double* dev_V1, double* dev_V2, double* dev_V3, double* dev_V4, const int NX, const int NY) { // boundary variables
 
 	// Local Thread Variable
 	double tempV = 0; // Temp voltage variable used to swap values
@@ -304,6 +301,7 @@ __global__ void TLMconnect(double* dev_V1, double* dev_V2, double* dev_V3, doubl
 		dev_V4[i - NY] = tempV;
 	}
 
+	//Don't need to Synchronise here as each loop operated on different arrays (V2,V4 first then V1,V3)
 
 	// Connect: Loop for ports 1 and 3
 	for (size_t i = tid + 1; i < (NX * NY); i += stride) { // Skip any Y=0 values
@@ -314,7 +312,16 @@ __global__ void TLMconnect(double* dev_V1, double* dev_V2, double* dev_V3, doubl
 			dev_V3[i - 1] = tempV;
 		}
 	}
-	__syncthreads(); // Sync between loops
+	//Synchronisation takes place in main
+}
+
+// TLM Boundary and Output Definition
+// Apply Boundary Conditions and calculate output voltage (store on device array for now)
+__global__ void TLMBoundryOutput(double* dev_V1, double* dev_V2, double* dev_V3, double* dev_V4, double* dev_vout, const int NX, const int NY, const int n, const int EoutX, const int EoutY, const double rXmin, const double rXmax, const double rYmin, const double rYmax) {
+
+	// Thread identities
+	unsigned int tid = threadIdx.x + blockIdx.x * blockDim.x; //Gets thread ID
+	unsigned int stride = blockDim.x * gridDim.x; //Strides to take inside the for loop based upon total available threads and blocks
 
 	// Calculate Boundary Conditions For V1 and V3
 	for (size_t x = tid; x < NX; x += stride) {
@@ -322,24 +329,17 @@ __global__ void TLMconnect(double* dev_V1, double* dev_V2, double* dev_V3, doubl
 		dev_V1[x * NY] = rYmin * dev_V1[x * NY];
 	}
 
+	//No Sync Needed as operating on V1,V3 then V2,V4
 
 	// Calculate Boundary Conditions For V2 and V4
 	for (size_t y = tid; y < NY; y += stride) {
 		dev_V4[(NX - 1) * NY + y] = rXmax * dev_V4[(NX - 1) * NY + y];
 		dev_V2[y] = rXmin * dev_V2[y];
 	}
-	//Synchronisation takes place in main
-}
 
-// TLM output function
-// Kernel call that only performs a singular addition
-// Could be done in CPU code!
-__global__ void TLMoutput(double* dev_V2, double* dev_V4, double* dev_vout, const int NX, const int NY, const int n, const int EoutX, const int EoutY) {
-
-	unsigned int tid = threadIdx.x + blockIdx.x * blockDim.x; //Gets thread ID - Only called on a single thread on a single block but good practise in case kernel called with more than 1 thread
-
+	//Calculate output voltage and store on device array
 	if (tid == 0) { //Only run on first thread
-		dev_vout[n] = dev_V2[EoutX * NY + EoutY] + dev_V4[EoutX * NY + EoutY]; //Calculate output voltage and store on device array
+		dev_vout[n] = dev_V2[EoutX * NY + EoutY] + dev_V4[EoutX * NY + EoutY];
 	}
 	//Synchronisation takes place in main
 }
