@@ -28,7 +28,7 @@
 
 #define defNX 100
 #define defNY 100
-#define defNT 1024		//Sets the starting number of NT
+#define defNT 8192		//Sets the starting number of NT
 
 //Essentially 2D -> 1D array means:
 // X = x*NY 
@@ -173,23 +173,23 @@ int main()
 		//Source
 		E0 = (1 / sqrt(2.)) * exp(-(n * dt - delay) * (n * dt - delay) / (width * width));
 		gaussian_time << n * dt << "  " << E0 << endl; //Writing the Source Voltage to a file  - Comment out for timing
-		TLMsource << <1, 4 >> > (dev_V1, dev_V2, dev_V3, dev_V4, NX, NY, Ein[0], Ein[1], E0);
+		TLMsource << <1, 4 >> > (dev_V1, dev_V2, dev_V3, dev_V4, NX, NY, Ein[0], Ein[1], E0); //Only 4 Operations so 1 Block with 4 Threads
 		cudaCheckAndSync();
 
 		//Scatter
-		TLMscatter << <numBlocks, numThreads >> > (dev_V1, dev_V2, dev_V3, dev_V4, NX, NY, Z);
+		TLMscatter << <numBlocks, numThreads >> > (dev_V1, dev_V2, dev_V3, dev_V4, NX, NY, Z); //Many operations so varying blocks and threads
 		cudaCheckAndSync();
 
 		//Connect
-		TLMconnect << <numBlocks, numThreads >> > (dev_V1, dev_V2, dev_V3, dev_V4, NX, NY, n, Eout[0], Eout[1], rXmin, rXmax, rYmin, rYmax);
+		TLMconnect << <numBlocks, numThreads >> > (dev_V1, dev_V2, dev_V3, dev_V4, NX, NY, n, Eout[0], Eout[1], rXmin, rXmax, rYmin, rYmax); //Many operations so varying blocks and threads
 		cudaCheckAndSync();
 
 		//Output
-		TLMoutput << <1, 1 >> > (dev_V2, dev_V4, dev_Vout, NX, NY, n, Eout[0], Eout[1]);
+		TLMoutput << <1, 1 >> > (dev_V2, dev_V4, dev_Vout, NX, NY, n, Eout[0], Eout[1]); //Only 1 Operation so 1 Block with 1 Thread
 		cudaCheckAndSync();
 
 		//Print progress to the terminal
-		//Will Slow down processing as time taken to print to screen (only relevant for shorter runtimes however)
+		//Will Slow down processing (marginally) as time taken to print to screen
 		if (n % 100 == 0)
 			cout << n << endl;
 	}
