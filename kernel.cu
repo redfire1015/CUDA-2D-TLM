@@ -261,7 +261,7 @@ __global__ void TLMscatter(double* dev_V1, double* dev_V2, double* dev_V3, doubl
 	unsigned int tid = threadIdx.x + blockIdx.x * blockDim.x; //Unique Thread ID
 	unsigned int stride = blockDim.x * gridDim.x;	//Strides to take inside the for loop based upon total available threads and blocks
 
-	for (size_t i = tid; i < NX * NY; i += stride) {
+	for (size_t i = tid; i < (NX * NY); i += stride) {
 		// Tidied up
 		double I = ((dev_V1[i] + dev_V4[i] - dev_V2[i] - dev_V3[i]) / 2); // Calculate coefficient
 		//I = (2 * V1[(x * NY) + y] + 2 * V4[(x * NY) + y] - 2 * V2[(x * NY) + y] - 2 * V3[(x * NY) + y]) / (4 * Z); //Old Calculation
@@ -295,7 +295,7 @@ __global__ void TLMconnect(double* dev_V1, double* dev_V2, double* dev_V3, doubl
 	unsigned int stride = blockDim.x * gridDim.x; //Strides to take inside the for loop based upon total available threads and blocks
 
 	// Connect: Loop for ports 2 and 4
-	for (size_t i = (tid + NY); i < (NX * NY); i += stride) { // Skip any x=0 values
+	for (size_t i = (tid + NY); i < (NX * NY); i += stride) { // Skip any x=0 values (offset by NY)
 		tempV = dev_V2[i];
 		dev_V2[i] = dev_V4[i - NY];
 		dev_V4[i - NY] = tempV;
@@ -304,7 +304,7 @@ __global__ void TLMconnect(double* dev_V1, double* dev_V2, double* dev_V3, doubl
 	//Don't need to Synchronise here as each loop operated on different arrays (V2,V4 first then V1,V3)
 
 	// Connect: Loop for ports 1 and 3
-	for (size_t i = tid + 1; i < (NX * NY); i += stride) { // Skip any Y=0 values
+	for (size_t i = tid + 1; i < (NX * NY); i += stride) { // Skip any Y=0 values (Offset by 1, then check)
 		// Skip when finding y = 0
 		if (i % NY != 0) {
 			tempV = dev_V1[i];
