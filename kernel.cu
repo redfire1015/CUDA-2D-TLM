@@ -21,14 +21,14 @@
 #include <ctime>
 
 //Program Defines 
-#define c 299792458			// speed of light in a vacuum
+#define c 299792458			// Speed of Light in a Vacuum 
 #define PI 3.1415926589793  // PI
-#define mu0 PI*4e-7         // magnetic permeability in a vacuum H/m
-#define eta0 c*mu0          // wave impedance in free space 
+#define mu0 PI*4e-7         // magnetic permeability in a Vacuum H/m
+#define eta0 c*mu0          // wave impedance
 
-#define defNX 150
-#define defNY 150
-#define defNT 4096		//Sets the starting number of NT
+#define defNX 100
+#define defNY 100
+#define defNT 65536		//Sets the starting number of NT
 
 //Essentially 2D -> 1D array means:
 // X = x*NY 
@@ -38,7 +38,7 @@ using namespace std;
 
 //*************	Utility Function Declarations *************
 /*
- * Function to Check for Cuda Errors and synchronise Cuda (Ein)
+ * Function to Check for CUDA Errors and synchronise CUDA
  * @param None
  */
 void cudaCheckAndSync();	//Function to check for CUDA Errors and Synchronise Device
@@ -78,7 +78,7 @@ __global__ void TLMscatter(double* dev_V1, double* dev_V2, double* dev_V3, doubl
  * @param Value of NX (Size of grid in X direction).
  * @param Value of NY (Size of grid in Y direction).
  */
-__global__ void TLMconnect(double* dev_V1, double* dev_V2, double* dev_V3, double* dev_V4, const int NX, const int NY);		// TLM connect process, including boundary conditions
+__global__ void TLMconnect(double* dev_V1, double* dev_V2, double* dev_V3, double* dev_V4, const int NX, const int NY);		// TLM connect process
 
 /*
  * Kernel that applied boundary conditions and determines the voltage at the output node (Eout)
@@ -96,7 +96,7 @@ __global__ void TLMconnect(double* dev_V1, double* dev_V2, double* dev_V3, doubl
  * @param Pointer to the device memory representing minimum Y boundary reflection.
  * @param Pointer to the device memory representing maximum Y boundary reflection.
  */
-__global__ void TLMBoundryOutput(double* dev_V1, double* dev_V2, double* dev_V3, double* dev_V4, double* dev_vout, const int NX, const int NY, const int n, const int EoutX, const int EoutY, const double rXmin, const double rXmax, const double rYmin, const double rYmax);
+__global__ void TLMBoundryOutput(double* dev_V1, double* dev_V2, double* dev_V3, double* dev_V4, double* dev_vout, const int NX, const int NY, const int n, const int EoutX, const int EoutY, const double rXmin, const double rXmax, const double rYmin, const double rYmax); // TLM Boundary process and Output Calculation
 
 
 int main()
@@ -117,7 +117,6 @@ int main()
 
 	//Calculated Host Variables
 	double dt = dl / (sqrt(2.) * c);	//Set the time step duration
-	//double Z = eta0 / sqrt(2.); //Value for Impedance //Not needed 
 
 	//boundary coefficients
 	double rXmin = -1;
@@ -126,16 +125,16 @@ int main()
 	double rYmax = -1;
 
 	//input / output
-	double width = 20 * dt * sqrt(2.);	//Gaussian Width
-	double delay = 100 * dt * sqrt(2.); // set time delay before starting excitation
-	int Ein[] = { 10,10 };	//Location of the input
-	int Eout[] = { 15,15 }; //Location of the Voltage Probe
+	double width = 20 * dt * sqrt(2.);	//Gaussian Input Signal Width
+	double delay = 100 * dt * sqrt(2.); // The time delay before starting the input excitation
+	int Ein[] = { 10,10 };	//Location of the input Voltage
+	int Eout[] = { 15,15 }; //Location of the output Voltage Probe
 
-	//CPU (Host) variables
-	double E0 = 0;
-	double* h_Vout = new double[NT](); //Array to Store data from GPU, Dynamic to make outputting data easier
+	//CPU  variables
+	double E0 = 0; //Variable for the input signal value
+	double* h_Vout = new double[NT](); //Array to Store data from GPU
 
-	//2D mesh for GPU variables
+	//Init arrays for GPU 
 	double* dev_V1 = nullptr;
 	double* dev_V2 = nullptr;
 	double* dev_V3 = nullptr;
@@ -143,7 +142,7 @@ int main()
 	double* dev_Vout = nullptr;
 
 	//Setup Blocks and Threads
-	int numThreads = 1024;
+	int numThreads = 256;
 	int numBlocks = std::min(((NX * NY) + numThreads - 1) / numThreads, 2147483647); // Guarantees at least 1 Block (Max Blocks on newer cards is (2^31)-1) (Old Cards it is 65535 or 2^16-1)
 
 	//Allocating Device Memory
@@ -160,8 +159,8 @@ int main()
 	start = clock();
 
 	//File streaming - Output Data
-	ofstream output("2D_GPU_Voltage.out"); //Output of the voltage  - Comment out for timing 
-	ofstream gaussian_time("2D_GPU_gaussian_excitation.out");  // log excitation function to file - Comment out for timing
+	ofstream output("2D_GPU_Voltage.out"); //Output of the voltage  
+	ofstream gaussian_time("2D_GPU_gaussian_excitation.out");  // log excitation function to file 
 
 	// Start of TLM algorithm
 	// Loop over total time NT in steps of dt
@@ -186,6 +185,7 @@ int main()
 
 		//Print progress to the terminal
 		//Will Slow down processing (marginally) as time taken to print to screen
+		//Comment Out for Timing
 		if (n % 100 == 0)
 			cout << n << endl;
 	}
@@ -193,9 +193,10 @@ int main()
 	//Once completed the calculations, copy the voltage output array back to the CPU to be written to file
 	cudaStatus = cudaMemcpy(h_Vout, dev_Vout, (NT * sizeof(double)), cudaMemcpyDeviceToHost); // Memory Copy back to CPU
 
-	// Output timing and voltage at Eout point
+	// Write Output Voltage at Eout to file
+	// Comment Out for Timing
 	for (int i = 0; i < NT; ++i) {
-		output << i * dt << "  " << h_Vout[i] << std::endl; // Writes output to file 
+		output << i * dt << "  " << h_Vout[i] << std::endl; // Writes output to file
 	}
 
 	//Closing Data logging Files
@@ -253,69 +254,64 @@ __global__ void TLMsource(double* dev_V1, double* dev_V2, double* dev_V3, double
 __global__ void TLMscatter(double* dev_V1, double* dev_V2, double* dev_V3, double* dev_V4, const int NX, const int NY) {
 
 	// Local Thread Variable
-	double V = 0; //Voltage Value
-
+	double V = 0; //Voltage variable (Unique to Each Thread)
 
 	// Thread identities
 	unsigned int tid = threadIdx.x + blockIdx.x * blockDim.x; //Unique Thread ID
 	unsigned int stride = blockDim.x * gridDim.x;	//Strides to take inside the for loop based upon total available threads and blocks
 
-	for (size_t i = tid; i < (NX * NY); i += stride) {
+	for (unsigned long long i = tid; i < (NX * NY); i += stride) {
 		// Tidied up
-		double I = ((dev_V1[i] + dev_V4[i] - dev_V2[i] - dev_V3[i]) / 2); // Calculate coefficient
-		//I = (2 * V1[(x * NY) + y] + 2 * V4[(x * NY) + y] - 2 * V2[(x * NY) + y] - 2 * V3[(x * NY) + y]) / (4 * Z); //Old Calculation
+		double I = ((dev_V1[i] + dev_V4[i] - dev_V2[i] - dev_V3[i]) / 2); // Calculate I
 
-		V = 2 * dev_V1[i] - I;         //port1
+		V = 2 * dev_V1[i] - I;
 		dev_V1[i] = V - dev_V1[i];
 
-		V = 2 * dev_V2[i] + I;         //port2
+		V = 2 * dev_V2[i] + I;
 		dev_V2[i] = V - dev_V2[i];
 
-		V = 2 * dev_V3[i] + I;         //port3
+		V = 2 * dev_V3[i] + I;
 		dev_V3[i] = V - dev_V3[i];
 
-		V = 2 * dev_V4[i] - I;         //port4
+		V = 2 * dev_V4[i] - I;
 		dev_V4[i] = V - dev_V4[i];
 		//Don't need to synchronise here as threads only rely on independent values!
-		//Reduces overhead
 	}
 	//Synchronisation takes place in main
 }
 
 //TLM Connect Definition
 //Connect TLM nodes and update Voltages based on interactions between nodes 
-__global__ void TLMconnect(double* dev_V1, double* dev_V2, double* dev_V3, double* dev_V4, const int NX, const int NY) { // boundary variables
+__global__ void TLMconnect(double* dev_V1, double* dev_V2, double* dev_V3, double* dev_V4, const int NX, const int NY) {
 
-	// Local Thread Variable
-	double tempV = 0; // Temp voltage variable used to swap values
+	double tempV = 0; // Temp voltage
 
 	// Thread identities
 	unsigned int tid = threadIdx.x + blockIdx.x * blockDim.x; //Unique Thread ID
 	unsigned int stride = blockDim.x * gridDim.x; //Strides to take inside the for loop based upon total available threads and blocks
 
-	// Connect: Loop for ports 2 and 4
-	for (size_t i = (tid + NY); i < (NX * NY); i += stride) { // Skip any x=0 values (offset by NY)
+	// Connect function performed on V2 and V4
+	for (unsigned long long i = (tid + NY); i < (NX * NY); i += stride) { // Skip any x=0 values (use offset of NY)
 		tempV = dev_V2[i];
-		dev_V2[i] = dev_V4[i - NY];
+		dev_V2[i] = dev_V4[i - NY]; //Swap adjacent Values remembering array is flattened (adjacent X values are now 'NY' indexes apart)
 		dev_V4[i - NY] = tempV;
 	}
 
 	//Don't need to Synchronise here as each loop operated on different arrays (V2,V4 first then V1,V3)
 
-	// Connect: Loop for ports 1 and 3
-	for (size_t i = tid + 1; i < (NX * NY); i += stride) { // Skip any Y=0 values (Offset by 1, then check)
-		// Skip when finding y = 0
-		if (i % NY != 0) {
+	// Connect function performed on V1 and V3
+	for (unsigned long long i = tid + 1; i < (NX * NY); i += stride) { // Skip any Y=0 values (Offset by 1, then check for each iteration)
+		if (i % NY != 0) { // When i = a multiple of NY, skip (Skips all NY = 0 in the flattened arrays)
 			tempV = dev_V1[i];
-			dev_V1[i] = dev_V3[i - 1];
+			dev_V1[i] = dev_V3[i - 1]; //Swap adjacent Values remembering array is flattened (Y values are still above and below each-other)
 			dev_V3[i - 1] = tempV;
 		}
 	}
 	//Synchronisation takes place in main
 }
 
-// TLM Boundary and Output Definition
-// Apply Boundary Conditions and calculate output voltage (store on device array for now)
+// TLM Boundary and Output function Definition
+// Apply Boundary Conditions and calculate output voltage
 __global__ void TLMBoundryOutput(double* dev_V1, double* dev_V2, double* dev_V3, double* dev_V4, double* dev_vout, const int NX, const int NY, const int n, const int EoutX, const int EoutY, const double rXmin, const double rXmax, const double rYmin, const double rYmax) {
 
 	// Thread identities
@@ -323,24 +319,24 @@ __global__ void TLMBoundryOutput(double* dev_V1, double* dev_V2, double* dev_V3,
 	unsigned int stride = blockDim.x * gridDim.x; //Strides to take inside the for loop based upon total available threads and blocks
 
 	// Calculate Boundary Conditions For V1 and V3
-	for (size_t x = tid; x < NX; x += stride) {
-		dev_V3[x * NY + NY - 1] = rYmax * dev_V3[x * NY + NY - 1];
-		dev_V1[x * NY] = rYmin * dev_V1[x * NY];
+	for (unsigned long long i = tid; i < NX; i += stride) {
+		dev_V3[(i * NY) + (NY - 1)] = rYmax * dev_V3[(i * NY) + (NY - 1)];
+		dev_V1[(i * NY)] = rYmin * dev_V1[(i * NY)];
 	}
 
 	//No Sync Needed as operating on V1,V3 then V2,V4
 
 	// Calculate Boundary Conditions For V2 and V4
-	for (size_t y = tid; y < NY; y += stride) {
-		dev_V4[(NX - 1) * NY + y] = rXmax * dev_V4[(NX - 1) * NY + y];
-		dev_V2[y] = rXmin * dev_V2[y];
+	for (unsigned long long i = tid; i < NY; i += stride) {
+		dev_V4[((NX - 1) * NY) + i] = rXmax * dev_V4[((NX - 1) * NY) + i];
+		dev_V2[i] = rXmin * dev_V2[i];
 	}
 
+	__syncthreads(); // Synchronise Here as going to use V2 and V4 arrays 
+
 	//Calculate output voltage and store on device array
-	if (tid == 0) { //Only run on first thread
-		dev_vout[n] = dev_V2[EoutX * NY + EoutY] + dev_V4[EoutX * NY + EoutY];
-	}
-	//Synchronisation takes place in main
+	if (tid == 0)  dev_vout[n] = dev_V2[EoutX * NY + EoutY] + dev_V4[EoutX * NY + EoutY]; //Only run on first thread
+
 }
 
 //************* Utility Function Definitions *************
