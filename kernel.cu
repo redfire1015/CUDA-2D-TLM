@@ -28,7 +28,7 @@
 
 #define defNX 100
 #define defNY 100
-#define defNT 65536		//Sets the starting number of NT
+#define defNT 1024		//Sets the starting number of NT
 
 //Essentially 2D -> 1D array means:
 // X = x*NY 
@@ -241,11 +241,10 @@ __global__ void TLMsource(double* dev_V1, double* dev_V2, double* dev_V3, double
 	// Unique Thread ID
 	unsigned int tid = threadIdx.x + blockIdx.x * blockDim.x;
 
-	//Only 4 Operations so going to limit them to run on 4 threads
-	if (tid == 0) dev_V1[(EinX * NY) + EinY] = dev_V1[(EinX * NY) + EinY] + E0;
-	if (tid == 1) dev_V2[(EinX * NY) + EinY] = dev_V2[(EinX * NY) + EinY] - E0;
-	if (tid == 2) dev_V3[(EinX * NY) + EinY] = dev_V3[(EinX * NY) + EinY] - E0;
-	if (tid == 3) dev_V4[(EinX * NY) + EinY] = dev_V4[(EinX * NY) + EinY] + E0;
+	if (tid == 0) dev_V1[(EinX * NY) + EinY] += E0;
+	if (tid == 1) dev_V2[(EinX * NY) + EinY] -= E0;
+	if (tid == 2) dev_V3[(EinX * NY) + EinY] -= E0;
+	if (tid == 3) dev_V4[(EinX * NY) + EinY] += E0;
 	//Synchronisation takes place in main
 }
 
