@@ -93,7 +93,7 @@ __global__ void TLMconnect(double* d_V1, double* d_V2, double* d_V3, double* d_V
  * @param Pointer to the device memory representing minimum Y boundary reflection.
  * @param Pointer to the device memory representing maximum Y boundary reflection.
  */
-__global__ void TLMBoundryOutput(double* d_V1, double* d_V2, double* d_V3, double* d_V4, double* dev_vout, const int NX, const int NY, const int n, const int EoutX, const int EoutY, const double rXmin, const double rXmax, const double rYmin, const double rYmax); // TLM Boundary process and Output Calculation
+__global__ void TLMBoundaryOutput(double* d_V1, double* d_V2, double* d_V3, double* d_V4, double* dev_vout, const int NX, const int NY, const int n, const int EoutX, const int EoutY, const double rXmin, const double rXmax, const double rYmin, const double rYmax); // TLM Boundary process and Output Calculation
 
 
 int main()
@@ -106,13 +106,13 @@ int main()
 		printf("Failed to set Device to Device 0");
 	}
 
-	//Changeable Host Variables
+
 	int NX = defNX; //Number of Nodes in X Direction
 	int NY = defNY; //Number of Nodes in Y Direction
 	int NT = defNT; //Number of Time steps
 	double dl = 1;						//Set the node line segment length in meters
 
-	//Calculated Host Variables
+	//Calculated Variables
 	double dt = dl / (sqrt(2.) * c);	//Set the time step duration
 
 	//boundary coefficients
@@ -121,7 +121,7 @@ int main()
 	double rYmin = -1;
 	double rYmax = -1;
 
-	//input / output
+
 	double width = 20 * dt * sqrt(2.);	//Gaussian Input Signal Width
 	double delay = 100 * dt * sqrt(2.); // The time delay before starting the input excitation
 	int Ein[] = { 10,10 };	//Location of the input Voltage
@@ -177,7 +177,7 @@ int main()
 		cudaCheckAndSync();
 
 		//Output
-		TLMBoundryOutput << <numBlocks, numThreads >> > (d_V1, d_V2, d_V3, d_V4, d_Vout, NX, NY, n, Eout[0], Eout[1], rXmin, rXmax, rYmin, rYmax); //Only 1 Operation so 1 Block with 1 Thread
+		TLMBoundaryOutput << <numBlocks, numThreads >> > (d_V1, d_V2, d_V3, d_V4, d_Vout, NX, NY, n, Eout[0], Eout[1], rXmin, rXmax, rYmin, rYmax); //Only 1 Operation so 1 Block with 1 Thread
 		cudaCheckAndSync();
 
 		//Print progress to the terminal
@@ -242,7 +242,6 @@ __global__ void TLMsource(double* d_V1, double* d_V2, double* d_V3, double* d_V4
 	if (tid == 1) d_V2[(EinX * NY) + EinY] -= E0;
 	if (tid == 2) d_V3[(EinX * NY) + EinY] -= E0;
 	if (tid == 3) d_V4[(EinX * NY) + EinY] += E0;
-	//Synchronisation takes place in main
 }
 
 //TLM Scatter Definition
@@ -257,7 +256,6 @@ __global__ void TLMscatter(double* d_V1, double* d_V2, double* d_V3, double* d_V
 	unsigned int stride = blockDim.x * gridDim.x;	//Strides to take inside the for loop based upon total available threads and blocks
 
 	for (unsigned long long i = tid; i < (NX * NY); i += stride) {
-		// Tidied up
 		double I = ((d_V1[i] + d_V4[i] - d_V2[i] - d_V3[i]) / 2); // Calculate I
 
 		V = 2 * d_V1[i] - I;
@@ -303,12 +301,11 @@ __global__ void TLMconnect(double* d_V1, double* d_V2, double* d_V3, double* d_V
 			d_V3[i - 1] = tempV;
 		}
 	}
-	//Synchronisation takes place in main
 }
 
 // TLM Boundary and Output function Definition
 // Apply Boundary Conditions and calculate output voltage
-__global__ void TLMBoundryOutput(double* d_V1, double* d_V2, double* d_V3, double* d_V4, double* dev_vout, const int NX, const int NY, const int n, const int EoutX, const int EoutY, const double rXmin, const double rXmax, const double rYmin, const double rYmax) {
+__global__ void TLMBoundaryOutput(double* d_V1, double* d_V2, double* d_V3, double* d_V4, double* dev_vout, const int NX, const int NY, const int n, const int EoutX, const int EoutY, const double rXmin, const double rXmax, const double rYmin, const double rYmax) {
 
 	// Thread identities
 	unsigned int tid = threadIdx.x + blockIdx.x * blockDim.x; //Gets thread ID
