@@ -21,18 +21,15 @@
 #include <ctime>
 
 //Program Defines 
-#define c 299792458			// Speed of Light in a Vacuum 
-#define PI 3.1415926589793  // PI
-#define mu0 PI*4e-7         // magnetic permeability in a Vacuum H/m
-#define eta0 c*mu0          // wave impedance
+#define M_PI 3.1415926589793	// PI
+#define c 299792458				// Speed of Light in a Vacuum 
+#define mu0 M_PI*4e-7			// magnetic permeability in a Vacuum H/m
+#define eta0 c*mu0				// wave impedance
 
 #define defNX 100
 #define defNY 100
-#define defNT 1024		//Sets the starting number of NT
+#define defNT 1024				//Sets the starting number of NT
 
-//Essentially 2D -> 1D array means:
-// X = x*NY 
-// Y = y 
 
 using namespace std;
 
