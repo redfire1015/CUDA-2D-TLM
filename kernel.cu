@@ -4,7 +4,7 @@
 //			  2D CUDA TLM				//
 //**************************************//
 
-//Cuda Includes
+//CUDA
 #include "cuda_runtime.h"
 #include "device_launch_parameters.h"
 
@@ -53,7 +53,7 @@ void cudaCheckAndSync();	//Function to check for CUDA Errors and Synchronise Dev
  * @param Value representing the Y coord of the input probe.
  * @param Value representing the source voltage.
  */
-__global__ void TLMsource(double* d_V1, double* d_V2, double* d_V3, double* d_V4, const int NX, const int NY, const int EinX, const int EinY, const double E0);	// excitation function
+__global__ void TLMsource(double* d_V1, double* d_V2, double* d_V3, double* d_V4, const int NX, const int NY, const double E0, const int EinX, const int EinY);	// excitation function
 
 /*
  * Kernel that 'scatters' an input impulse based on an applied source voltage
@@ -93,7 +93,7 @@ __global__ void TLMconnect(double* d_V1, double* d_V2, double* d_V3, double* d_V
  * @param Pointer to the device memory representing minimum Y boundary reflection.
  * @param Pointer to the device memory representing maximum Y boundary reflection.
  */
-__global__ void TLMBoundaryOutput(double* d_V1, double* d_V2, double* d_V3, double* d_V4, double* dev_vout, const int NX, const int NY, const int n, const int EoutX, const int EoutY, const double rXmin, const double rXmax, const double rYmin, const double rYmax); // TLM Boundary process and Output Calculation
+__global__ void TLMBoundaryOutput(double* d_V1, double* d_V2, double* d_V3, double* d_V4, double* dev_vout, const int NX, const int NY, const double rXmin, const double rXmax, const double rYmin, const double rYmax, const int n, const int EoutX, const int EoutY); // TLM Boundary process and Output Calculation
 
 
 int main()
@@ -110,7 +110,7 @@ int main()
 	int NX = defNX; //Number of Nodes in X Direction
 	int NY = defNY; //Number of Nodes in Y Direction
 	int NT = defNT; //Number of Time steps
-	double dl = 1;						//Set the node line segment length in meters
+	double dl = 1;	//Set the node line segment length in meters
 
 	//Calculated Variables
 	double dt = dl / (sqrt(2.) * c);	//Set the time step duration
@@ -129,7 +129,7 @@ int main()
 
 	//CPU  variables
 	double E0 = 0; //Variable for the input signal value
-	double* h_Vout = new double[NT](); //Array to Store data from GPU
+	double* h_Vout = new double[NT](); //Array to Store data from GPU and set to 0
 
 	//Init arrays for GPU 
 	double* d_V1 = nullptr;
@@ -139,8 +139,8 @@ int main()
 	double* d_Vout = nullptr;
 
 	//Setup Blocks and Threads
-	int numThreads = 256;
-	int numBlocks = std::min(((NX * NY) + numThreads - 1) / numThreads, 2147483647); // Guarantees at least 1 Block (Max Blocks on newer cards is (2^31)-1) (Old Cards it is 65535 or 2^16-1)
+	int threadsPerBlock = 256;
+	int numBlocks = std::min(((NX * NY) + threadsPerBlock - 1) / threadsPerBlock, 2147483647); // Guarantees at least 1 Block (Max Blocks on newer cards is (2^31)-1) (Old Cards it is 65535 or 2^16-1)
 
 	//Allocating Device Memory
 	cudaCheckAndSync();
@@ -165,19 +165,20 @@ int main()
 		//Source
 		E0 = (1 / sqrt(2.)) * exp(-(n * dt - delay) * (n * dt - delay) / (width * width));
 		gaussian_time << n * dt << "  " << E0 << endl; //Writing the Source Voltage to a file  - Comment out for timing
-		TLMsource << <1, 4 >> > (d_V1, d_V2, d_V3, d_V4, NX, NY, Ein[0], Ein[1], E0); //Only 4 Operations so 1 Block with 4 Threads
+
+		TLMsource << <1, 4 >> > (d_V1, d_V2, d_V3, d_V4, NX, NY, E0, Ein[0], Ein[1]); //Only 4 Operations so 1 Block with 4 Threads
 		cudaCheckAndSync();
 
 		//Scatter
-		TLMscatter << <numBlocks, numThreads >> > (d_V1, d_V2, d_V3, d_V4, NX, NY); //Many operations so varying blocks and threads
+		TLMscatter << <numBlocks, threadsPerBlock >> > (d_V1, d_V2, d_V3, d_V4, NX, NY); //Many operations so varying blocks and threads
 		cudaCheckAndSync();
 
 		//Connect
-		TLMconnect << <numBlocks, numThreads >> > (d_V1, d_V2, d_V3, d_V4, NX, NY); //Many operations so varying blocks and threads
+		TLMconnect << <numBlocks, threadsPerBlock >> > (d_V1, d_V2, d_V3, d_V4, NX, NY); //Many operations so varying blocks and threads
 		cudaCheckAndSync();
 
 		//Output
-		TLMBoundaryOutput << <numBlocks, numThreads >> > (d_V1, d_V2, d_V3, d_V4, d_Vout, NX, NY, n, Eout[0], Eout[1], rXmin, rXmax, rYmin, rYmax); //Only 1 Operation so 1 Block with 1 Thread
+		TLMBoundaryOutput << <numBlocks, threadsPerBlock >> > (d_V1, d_V2, d_V3, d_V4, d_Vout, NX, NY, rXmin, rXmax, rYmin, rYmax, n, Eout[0], Eout[1]); //Only 1 Operation so 1 Block with 1 Thread
 		cudaCheckAndSync();
 
 		//Print progress to the terminal
@@ -188,23 +189,21 @@ int main()
 	}
 
 	//Once completed the calculations, copy the voltage output array back to the CPU to be written to file
-	cudaStatus = cudaMemcpy(h_Vout, d_Vout, (NT * sizeof(double)), cudaMemcpyDeviceToHost); // Memory Copy back to CPU
+	cudaStatus = cudaMemcpy(h_Vout, d_Vout, (sizeof(double) * NT), cudaMemcpyDeviceToHost); // Memory Copy back to CPU
 
 	// Write Output Voltage at Eout to file
-	// Comment Out for Timing
 	for (int i = 0; i < NT; ++i) {
-		output << i * dt << "  " << h_Vout[i] << std::endl; // Writes output to file
+		output << i * dt << "  " << h_Vout[i] << endl; // Comment Out for Timing
 	}
 
 	//Closing Data logging Files
 	output.close();
 	gaussian_time.close();
 
-
 	cout << "Done";
 	end = clock(); //End Timing
 	double TLM_Execution_Time = ((end - start) / (double)CLOCKS_PER_SEC); //Calculate Execution time
-	std::cout << TLM_Execution_Time << '\n'; //Print time
+	cout << TLM_Execution_Time << '\n'; //Print time
 
 	cin.get(); //Keep Terminal Open until Enter is pressed
 
@@ -233,7 +232,7 @@ int main()
 
 //TLM Source Definition
 //Places a source stimulation at a given point wrt time.
-__global__ void TLMsource(double* d_V1, double* d_V2, double* d_V3, double* d_V4, const int NX, const int NY, const int EinX, const int EinY, const double E0) {
+__global__ void TLMsource(double* d_V1, double* d_V2, double* d_V3, double* d_V4, const int NX, const int NY, const double E0, const int EinX, const int EinY) {
 
 	// Unique Thread ID
 	unsigned int tid = threadIdx.x + blockIdx.x * blockDim.x;
@@ -306,7 +305,7 @@ __global__ void TLMconnect(double* d_V1, double* d_V2, double* d_V3, double* d_V
 
 // TLM Boundary and Output function Definition
 // Apply Boundary Conditions and calculate output voltage
-__global__ void TLMBoundaryOutput(double* d_V1, double* d_V2, double* d_V3, double* d_V4, double* dev_vout, const int NX, const int NY, const int n, const int EoutX, const int EoutY, const double rXmin, const double rXmax, const double rYmin, const double rYmax) {
+__global__ void TLMBoundaryOutput(double* d_V1, double* d_V2, double* d_V3, double* d_V4, double* dev_vout, const int NX, const int NY, const double rXmin, const double rXmax, const double rYmin, const double rYmax, const int n, const int EoutX, const int EoutY) {
 
 	unsigned int tid = threadIdx.x + blockIdx.x * blockDim.x; //Gets thread ID
 	unsigned int stride = blockDim.x * gridDim.x; //Strides to take inside the for loop based upon total available threads and blocks
