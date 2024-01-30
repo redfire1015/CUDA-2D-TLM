@@ -251,7 +251,6 @@ __global__ void TLMscatter(double* d_V1, double* d_V2, double* d_V3, double* d_V
 	// Local Thread Variable
 	double V = 0; //Voltage variable (Unique to Each Thread)
 
-	// Thread identities
 	unsigned int tid = threadIdx.x + blockIdx.x * blockDim.x; //Unique Thread ID
 	unsigned int stride = blockDim.x * gridDim.x;	//Strides to take inside the for loop based upon total available threads and blocks
 
@@ -271,7 +270,6 @@ __global__ void TLMscatter(double* d_V1, double* d_V2, double* d_V3, double* d_V
 		d_V4[i] = V - d_V4[i];
 		//Don't need to synchronise here as threads only rely on independent values!
 	}
-	//Synchronisation takes place in main
 }
 
 //TLM Connect Definition
@@ -280,7 +278,6 @@ __global__ void TLMconnect(double* d_V1, double* d_V2, double* d_V3, double* d_V
 
 	double tempV = 0; // Temp voltage
 
-	// Thread identities
 	unsigned int tid = threadIdx.x + blockIdx.x * blockDim.x; //Unique Thread ID
 	unsigned int stride = blockDim.x * gridDim.x; //Strides to take inside the for loop based upon total available threads and blocks
 
@@ -295,7 +292,11 @@ __global__ void TLMconnect(double* d_V1, double* d_V2, double* d_V3, double* d_V
 
 	// Connect function performed on V1 and V3
 	for (unsigned long long i = tid + 1; i < (NX * NY); i += stride) { // Skip any Y=0 values (Offset by 1, then check for each iteration)
-		if (i % NY != 0) { // When i = a multiple of NY, skip (Skips all NY = 0 in the flattened arrays)
+		if (i % NY == 0) { // When i = a multiple of NY, skip (Skips all NY = 0 in the flattened arrays)
+			// Do Nothing
+		}
+		else
+		{
 			tempV = d_V1[i];
 			d_V1[i] = d_V3[i - 1]; //Swap adjacent Values remembering array is flattened (Y values are still above and below each-other)
 			d_V3[i - 1] = tempV;
@@ -307,7 +308,6 @@ __global__ void TLMconnect(double* d_V1, double* d_V2, double* d_V3, double* d_V
 // Apply Boundary Conditions and calculate output voltage
 __global__ void TLMBoundaryOutput(double* d_V1, double* d_V2, double* d_V3, double* d_V4, double* dev_vout, const int NX, const int NY, const int n, const int EoutX, const int EoutY, const double rXmin, const double rXmax, const double rYmin, const double rYmax) {
 
-	// Thread identities
 	unsigned int tid = threadIdx.x + blockIdx.x * blockDim.x; //Gets thread ID
 	unsigned int stride = blockDim.x * gridDim.x; //Strides to take inside the for loop based upon total available threads and blocks
 
